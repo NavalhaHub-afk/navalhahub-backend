@@ -19,7 +19,7 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
-  ) {}
+  ) { }
 
   /**
    * Cadastro com email e senha
@@ -33,6 +33,8 @@ export class AuthController {
     return this.authService.signupWithEmail(
       dto.email,
       dto.password,
+      dto.fullName,
+      dto.phone,
     );
   }
 

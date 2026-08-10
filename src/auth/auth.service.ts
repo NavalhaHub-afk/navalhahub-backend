@@ -13,25 +13,45 @@ export class AuthService {
   ) {}
 
   async signupWithEmail(
-    email: string,
-    password: string,
-  ) {
-    const supabase = this.supabaseService.getClient();
+  email: string,
+  password: string,
+  fullName: string,
+  phone?: string,
+) {
+  console.info('signupWithEmail', {
+    email,
+    phone,
+    fullName,
+  });
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+  const supabase = this.supabaseService.getClient();
 
-    if (error) {
-      throw new BadRequestException(error.message);
-    }
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    phone,
+    options: {
+      data: {
+        full_name: fullName,
+      },
+    },
+  });
 
-    return {
-      user: data.user,
-      session: data.session,
-    };
+  console.info('signupWithEmail', {
+    user: data.user,
+    session: data.session,
+    error,
+  });
+
+  if (error) {
+    throw new BadRequestException(error.message);
   }
+
+  return {
+    user: data.user,
+    session: data.session,
+  };
+}
 
   async loginWithEmail(
     email: string,
