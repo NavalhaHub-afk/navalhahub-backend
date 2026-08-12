@@ -45,7 +45,7 @@ export class AuthController {
   async logout(
     @Headers('authorization') authorization?: string,
   ) {
-    return this.authService.logout(authorization);
+    return this.authService.logout();
   }
 
   @Post('password/reset-request')
