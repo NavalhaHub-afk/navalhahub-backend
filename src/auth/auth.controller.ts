@@ -1,117 +1,90 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
   Post,
-  BadRequestException,
+  Req,
+  Res,
+  UnauthorizedException,
+  UnprocessableEntityException,
+  ConflictException,
 } from '@nestjs/common';
+import { Request, Response } from 'express';
 
 import { AuthService } from './auth.service';
-
-import { SignupEmailDto } from './dto/signup-email.dto';
 import { LoginEmailDto } from './dto/login-email.dto';
-import {
-  RequestEmailOtpDto,
-  RequestPhoneOtpDto,
-} from './dto/request-otp.dto';
-import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { SignupEmailDto } from './dto/signup-email.dto';
 
-@Controller('auth')
+@Controller('api/v1/auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-  ) { }
+  constructor(private readonly authService: AuthService) {}
 
-  /**
-   * Cadastro com email e senha
-   *
-   * POST /auth/signup/email
-   */
-  @Post('signup/email')
-  async signupWithEmail(
+  @Post('signup')
+  @HttpCode(HttpStatus.CREATED)
+  async signup(
     @Body() dto: SignupEmailDto,
+    @Res({ passthrough: true }) res?: Response,
   ) {
-    return this.authService.signupWithEmail(
-      dto.email,
-      dto.password,
-      dto.fullName,
-      dto.phone,
-    );
+    return this.authService.signup(dto, res);
   }
 
-  /**
-   * Login com email e senha
-   *
-   * POST /auth/login/email
-   */
-  @Post('login/email')
-  async loginWithEmail(
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  async login(
     @Body() dto: LoginEmailDto,
+    @Res({ passthrough: true }) res?: Response,
   ) {
-    return this.authService.loginWithEmail(
-      dto.email,
-      dto.password,
-    );
+    return this.authService.login(dto, res);
   }
 
-  /**
-   * Solicita OTP por email
-   *
-   * POST /auth/otp/email/request
-   */
-  @Post('otp/email/request')
-  async requestEmailOtp(
-    @Body() dto: RequestEmailOtpDto,
-  ) {
-    return this.authService.requestEmailOtp(
-      dto.email,
-    );
+  @Get('me')
+  async getCurrentUser(@Req() req: Request) {
+    return this.authService.getCurrentUser(req);
   }
 
-  /**
-   * Solicita OTP por telefone
-   *
-   * POST /auth/otp/phone/request
-   */
-  @Post('otp/phone/request')
-  async requestPhoneOtp(
-    @Body() dto: RequestPhoneOtpDto,
+  @Post('logout')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.requestPhoneOtp(
-      dto.phone,
-    );
+    return this.authService.logout(req, res);
   }
 
-  /**
-   * Verifica OTP de email ou telefone
-   *
-   * POST /auth/otp/verify
-   */
-  @Post('otp/verify')
-  async verifyOtp(
-    @Body() dto: VerifyOtpDto,
-  ) {
-    if (dto.type === 'email') {
-      if (!dto.email) {
-        throw new BadRequestException(
-          'Email é obrigatório para verificar OTP de email',
-        );
-      }
-
-      return this.authService.verifyEmailOtp(
-        dto.email,
-        dto.token,
-      );
+  @Post('password/reset-request')
+  @HttpCode(HttpStatus.OK)
+  async requestPasswordReset(@Body() dto: { email: string }) {
+    if (!dto?.email) {
+      throw new BadRequestException({
+        error: {
+          code: 'BAD_REQUEST',
+          message: 'Email é obrigatório',
+          details: {},
+        },
+      });
     }
 
-    if (!dto.phone) {
-      throw new BadRequestException(
-        'Telefone é obrigatório para verificar OTP de telefone',
-      );
+    return this.authService.requestPasswordReset(dto);
+  }
+
+  @Post('password/reset-confirm')
+  @HttpCode(HttpStatus.OK)
+  async confirmPasswordReset(
+    @Body() dto: { token: string; newPassword: string },
+  ) {
+    if (!dto?.token || !dto?.newPassword) {
+      throw new BadRequestException({
+        error: {
+          code: 'TOKEN_INVALID',
+          message: 'Token ou nova senha inválidos',
+          details: {},
+        },
+      });
     }
 
-    return this.authService.verifyPhoneOtp(
-      dto.phone,
-      dto.token,
-    );
+    return this.authService.confirmPasswordReset(dto);
   }
 }
