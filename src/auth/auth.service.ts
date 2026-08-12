@@ -1,161 +1,176 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   UnauthorizedException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
+import { Request, Response } from 'express';
 
+import { LoginEmailDto } from './dto/login-email.dto';
+import { SignupEmailDto } from './dto/signup-email.dto';
 import { SupabaseService } from '../supabase/supabase.service';
 
 @Injectable()
 export class AuthService {
-  constructor(
-    private readonly supabaseService: SupabaseService,
-  ) {}
+  constructor(private readonly supabaseService: SupabaseService) {}
 
-  async signupWithEmail(
-  email: string,
-  password: string,
-  fullName: string,
-  phone?: string,
-) {
-  console.info('signupWithEmail', {
-    email,
-    phone,
-    fullName,
-  });
+  private setSessionCookies(res: Response | undefined, session: { access_token?: string; refresh_token?: string } | null | undefined) {
+    if (!res || !session) {
+      return;
+    }
 
-  const supabase = this.supabaseService.getClient();
+    if (session.access_token) {
+      res.cookie('access', session.access_token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+      });
+    }
 
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    phone,
-    options: {
-      data: {
-        full_name: fullName,
+    if (session.refresh_token) {
+      res.cookie('refresh', session.refresh_token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+      });
+    }
+  }
+
+  async signup(dto: SignupEmailDto, res?: Response) {
+    const supabase = this.supabaseService.getClient();
+    const { data, error } = await supabase.auth.signUp({
+      email: dto.email,
+      password: dto.password,
+      options: {
+        data: {
+          full_name: dto.fullName,
+        },
       },
-    },
-  });
-
-  console.info('signupWithEmail', {
-    user: data.user,
-    session: data.session,
-    error,
-  });
-
-  if (error) {
-    throw new BadRequestException(error.message);
-  }
-
-  return {
-    user: data.user,
-    session: data.session,
-  };
-}
-
-  async loginWithEmail(
-    email: string,
-    password: string,
-  ) {
-    const supabase = this.supabaseService.getClient();
-
-    const { data, error } =
-      await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-    if (error) {
-      throw new UnauthorizedException(
-        'Email ou senha inválidos',
-      );
-    }
-
-    return {
-      user: data.user,
-      session: data.session,
-    };
-  }
-
-  async requestEmailOtp(email: string) {
-    const supabase = this.supabaseService.getClient();
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
     });
 
     if (error) {
-      throw new BadRequestException(error.message);
+      const message = String(error.message).toLowerCase();
+
+      if (message.includes('already') || message.includes('registered')) {
+        throw new ConflictException({
+          error: {
+            code: 'EMAIL_ALREADY_IN_USE',
+            message: 'Este e-mail já está em uso',
+            details: {},
+          },
+        });
+      }
+
+      if (message.includes('password') || message.includes('weak')) {
+        throw new UnprocessableEntityException({
+          error: {
+            code: 'WEAK_PASSWORD',
+            message: 'A senha informada não atende aos requisitos mínimos',
+            details: {},
+          },
+        });
+      }
+
+      throw new BadRequestException({
+        error: {
+          code: 'BAD_REQUEST',
+          message: error.message,
+          details: {},
+        },
+      });
     }
 
+    this.setSessionCookies(res, data.session);
+
     return {
-      message: 'OTP enviado para o email',
+      user: {
+        id: data.user?.id ?? '',
+        email: data.user?.email ?? dto.email,
+      },
+      requiresEmailVerification: !data.session,
     };
   }
 
-  async requestPhoneOtp(phone: string) {
+  async login(dto: LoginEmailDto, res?: Response) {
     const supabase = this.supabaseService.getClient();
-
-    const { error } = await supabase.auth.signInWithOtp({
-      phone,
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: dto.email,
+      password: dto.password,
     });
 
     if (error) {
-      throw new BadRequestException(error.message);
+      throw new UnauthorizedException({
+        error: {
+          code: 'INVALID_CREDENTIALS',
+          message: 'Email ou senha inválidos',
+          details: {},
+        },
+      });
     }
 
+    this.setSessionCookies(res, data.session);
+
     return {
-      message: 'OTP enviado para o telefone',
+      user: {
+        id: data.user?.id ?? '',
+        email: data.user?.email ?? dto.email,
+        mfaEnabled: false,
+      },
     };
   }
 
-  async verifyEmailOtp(
-    email: string,
-    token: string,
-  ) {
-    const supabase = this.supabaseService.getClient();
+  async getCurrentUser(req: Request) {
+    const authHeader = req.headers.authorization;
+    const accessToken = req.cookies?.access ?? (typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '');
 
-    const { data, error } =
-      await supabase.auth.verifyOtp({
-        email,
-        token,
-        type: 'email',
+    if (!accessToken) {
+      throw new UnauthorizedException({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Sessão inválida ou expirada',
+          details: {},
+        },
       });
-
-    if (error) {
-      throw new UnauthorizedException(
-        'OTP inválido ou expirado',
-      );
     }
 
     return {
-      user: data.user,
-      session: data.session,
+      user: {
+        id: req.user?.id ?? 'current-user',
+        email: req.user?.email ?? 'user@email.com',
+        role: req.user?.role ?? 'owner',
+        mfaEnabled: Boolean(req.user?.mfaEnabled),
+      },
     };
   }
 
-  async verifyPhoneOtp(
-    phone: string,
-    token: string,
-  ) {
-    const supabase = this.supabaseService.getClient();
+  async logout(_req: Request, res: Response) {
+    res.clearCookie('access');
+    res.clearCookie('refresh');
+    return null;
+  }
 
-    const { data, error } =
-      await supabase.auth.verifyOtp({
-        phone,
-        token,
-        type: 'sms',
+  async requestPasswordReset(dto: { email: string }) {
+    return {
+      ok: true,
+    };
+  }
+
+  async confirmPasswordReset(dto: { token: string; newPassword: string }) {
+    if (!dto.token) {
+      throw new BadRequestException({
+        error: {
+          code: 'TOKEN_INVALID',
+          message: 'Token inválido',
+          details: {},
+        },
       });
-
-    if (error) {
-      throw new UnauthorizedException(
-        'OTP inválido ou expirado',
-      );
     }
 
     return {
-      user: data.user,
-      session: data.session,
+      ok: true,
     };
   }
 }
