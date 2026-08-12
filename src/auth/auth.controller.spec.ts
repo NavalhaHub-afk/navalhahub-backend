@@ -47,19 +47,19 @@ describe('AuthController', () => {
   it('should delegate auth actions to the service', async () => {
     const signupDto = { email: 'user@email.com', password: '12345678', fullName: 'User Name' };
     const loginDto = { email: 'user@email.com', password: '12345678' };
-    const response = {} as any;
+    const authorization = 'Bearer token';
 
-    await controller.signup(signupDto as any, response);
-    await controller.login(loginDto as any, response);
-    await controller.getCurrentUser({} as any);
-    await controller.logout({} as any, response);
+    await controller.signup(signupDto as any);
+    await controller.login(loginDto as any);
+    await controller.getCurrentUser(authorization);
+    await controller.logout(authorization);
     await controller.requestPasswordReset({ email: 'user@email.com' } as any);
     await controller.confirmPasswordReset({ token: 'token', newPassword: '87654321' } as any);
 
-    expect(service.signup).toHaveBeenCalledWith(signupDto, response);
-    expect(service.login).toHaveBeenCalledWith(loginDto, response);
-    expect(service.getCurrentUser).toHaveBeenCalledWith({});
-    expect(service.logout).toHaveBeenCalledWith({}, response);
+    expect(service.signup).toHaveBeenCalledWith(signupDto);
+    expect(service.login).toHaveBeenCalledWith(loginDto);
+    expect(service.getCurrentUser).toHaveBeenCalledWith(authorization);
+    expect(service.logout).toHaveBeenCalledWith(authorization);
     expect(service.requestPasswordReset).toHaveBeenCalledWith({ email: 'user@email.com' });
     expect(service.confirmPasswordReset).toHaveBeenCalledWith({ token: 'token', newPassword: '87654321' });
   });

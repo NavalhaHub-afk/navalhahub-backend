@@ -5,45 +5,25 @@ import {
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
 
 import { LoginEmailDto } from './dto/login-email.dto';
+import {
+  PasswordResetConfirmDto,
+  PasswordResetRequestDto,
+} from './dto/password-reset.dto';
 import { SignupEmailDto } from './dto/signup-email.dto';
 import { SupabaseService } from '../supabase/supabase.service';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(private readonly supabaseService: SupabaseService) { }
 
-  private setSessionCookies(res: Response | undefined, session: { access_token?: string; refresh_token?: string } | null | undefined) {
-    if (!res || !session) {
-      return;
-    }
-
-    if (session.access_token) {
-      res.cookie('access', session.access_token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-      });
-    }
-
-    if (session.refresh_token) {
-      res.cookie('refresh', session.refresh_token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-      });
-    }
-  }
-
-  async signup(dto: SignupEmailDto, res?: Response) {
+  async signup(dto: SignupEmailDto) {
     const supabase = this.supabaseService.getClient();
     const { data, error } = await supabase.auth.signUp({
       email: dto.email,
       password: dto.password,
+      phone: dto.phone,
       options: {
         data: {
           full_name: dto.fullName,
@@ -83,8 +63,6 @@ export class AuthService {
       });
     }
 
-    this.setSessionCookies(res, data.session);
-
     return {
       user: {
         id: data.user?.id ?? '',
@@ -94,7 +72,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginEmailDto, res?: Response) {
+  async login(dto: LoginEmailDto) {
     const supabase = this.supabaseService.getClient();
     const { data, error } = await supabase.auth.signInWithPassword({
       email: dto.email,
@@ -111,22 +89,40 @@ export class AuthService {
       });
     }
 
-    this.setSessionCookies(res, data.session);
-
     return {
       user: {
-        id: data.user?.id ?? '',
-        email: data.user?.email ?? dto.email,
-        mfaEnabled: false,
+        id: data.user?.id,
+        email: data.user?.email,
+      },
+      session: {
+        accessToken: data.session?.access_token,
+        refreshToken: data.session?.refresh_token,
+        expiresAt: data.session?.expires_at,
       },
     };
   }
 
-  async getCurrentUser(req: Request) {
-    const authHeader = req.headers.authorization;
-    const accessToken = req.cookies?.access ?? (typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '');
+  async getCurrentUser(authorization?: string) {
+    if (
+      typeof authorization !== 'string' ||
+      !authorization.startsWith('Bearer ')
+    ) {
+      throw new UnauthorizedException({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Sessão inválida ou expirada',
+          details: {},
+        },
+      });
+    }
 
-    if (!accessToken) {
+    const token = authorization.substring(7);
+
+    const supabase = this.supabaseService.getClient();
+
+    const { data, error } = await supabase.auth.getUser(token);
+
+    if (error || !data.user) {
       throw new UnauthorizedException({
         error: {
           code: 'UNAUTHORIZED',
@@ -138,32 +134,104 @@ export class AuthService {
 
     return {
       user: {
-        id: req.user?.id ?? 'current-user',
-        email: req.user?.email ?? 'user@email.com',
-        role: req.user?.role ?? 'owner',
-        mfaEnabled: Boolean(req.user?.mfaEnabled),
+        id: data.user.id,
+        email: data.user.email,
       },
     };
   }
 
-  async logout(_req: Request, res: Response) {
-    res.clearCookie('access');
-    res.clearCookie('refresh');
-    return null;
-  }
+  async logout() {
+    const supabase = this.supabaseService.getClient();
 
-  async requestPasswordReset(dto: { email: string }) {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      throw new BadRequestException({
+        error: {
+          code: 'LOGOUT_FAILED',
+          message: error.message,
+          details: {},
+        },
+      });
+    }
+
     return {
       ok: true,
     };
   }
 
-  async confirmPasswordReset(dto: { token: string; newPassword: string }) {
-    if (!dto.token) {
+  async requestPasswordReset(dto: PasswordResetRequestDto) {
+    const supabase = this.supabaseService.getClient();
+
+    const { error } = await supabase.auth.resetPasswordForEmail(
+      dto.email,
+    );
+
+    if (error) {
       throw new BadRequestException({
         error: {
+          code: 'PASSWORD_RESET_FAILED',
+          message: error.message,
+          details: {},
+        },
+      });
+    }
+
+    return {
+      ok: true,
+    };
+  }
+
+  async confirmPasswordReset(
+    dto: PasswordResetConfirmDto,
+    authorization?: string,
+  ) {
+    if (
+      typeof authorization !== 'string' ||
+      !authorization.startsWith('Bearer ')
+    ) {
+      throw new UnauthorizedException({
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Sessão de recuperação inválida ou expirada',
+          details: {},
+        },
+      });
+    }
+
+    const accessToken = authorization.substring(7);
+
+    const supabase = this.supabaseService.getClient();
+
+    const { data: userData, error: userError } =
+      await supabase.auth.getUser(accessToken);
+
+    if (userError || !userData.user) {
+      throw new UnauthorizedException({
+        error: {
           code: 'TOKEN_INVALID',
-          message: 'Token inválido',
+          message: 'Token inválido ou expirado',
+          details: {},
+        },
+      });
+    }
+
+    // Atualiza a senha
+    const { error } = await supabase.auth.updateUser(
+      {
+        password: dto.newPassword,
+      },
+      {
+        // dependendo de como seu client está configurado,
+        // pode ser necessário trabalhar com a sessão/token
+      },
+    );
+
+    if (error) {
+      throw new BadRequestException({
+        error: {
+          code: 'PASSWORD_UPDATE_FAILED',
+          message: error.message,
           details: {},
         },
       });
